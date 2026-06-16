@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FEYA Studio — Wand Hero</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; background: transparent; overflow: hidden; }
+  canvas { display: block; width: 100% !important; height: 100% !important; }
+  #loading {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: rgba(180,160,200,0.4);
+    font-family: sans-serif;
+    font-size: 12px;
+    letter-spacing: .18em;
+    text-transform: uppercase;
+    pointer-events: none;
+    transition: opacity 1s ease;
+  }
+</style>
+</head>
+<body>
+<div id="loading">loading</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.163.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.163.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.3;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(42, window.innerWidth / window.innerHeight, 0.1, 100);
+camera.position.z = 5;
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.8));
+const key = new THREE.DirectionalLight(0xffe0ff, 2.5);
+key.position.set(-2, 3, 4);
+scene.add(key);
+const rim = new THREE.DirectionalLight(0xaabbff, 1.6);
+rim.position.set(3, -1, -2);
+scene.add(rim);
+const fill = new THREE.DirectionalLight(0xffccee, 1.0);
+fill.position.set(1, 2, 3);
+scene.add(fill);
+const sparkle = new THREE.PointLight(0xff66ff, 2.0, 3.5);
+scene.add(sparkle);
+
+const easeOutQuint = t => 1 - Math.pow(1 - t, 5);
+const easeOutBack = t => {
+  const c = 0.5;
+  return 1 + (c + 1) * Math.pow(t - 1, 3) + c * Math.pow(t - 1, 2);
+};
+const lerp = (a, b, t) => a + (b - a) * t;
+
+// REST: zero rotation — model already baked into correct pose via Ctrl+A in Blender
+const REST = { x: 0, y: 0, z: 0, rx: 0, ry: 0, rz: 0 };
+
+// START: off screen top-left, rotated as if wrist is pulling back before cast
+const START = { x: -5.5, y: 3.8, z: -0.5, rx: -1.0, ry: 0.8, rz: 1.2 };
+
+const loader = new GLTFLoader();
+let wand = null;
+let entryDone = false;
+let entryStart = null;
+const ENTRY_DURATION = 1.15;
+
+loader.load(
+  'https://raw.githubusercontent.com/svidronovak-dot/feya-studio/main/feya-wand-v2.glb',
+  (gltf) => {
+    wand = gltf.scene;
+
+    const box = new THREE.Box3().setFromObject(wand);
+    const center = box.getCenter(new THREE.Vector3());
+    const size = box.getSize(new THREE.Vector3());
+    wand.position.sub(center);
+    const maxDim = Math.max(size.x, size.y, size.z);
+    wand.scale.setScalar(3.2 / maxDim);
+
+    wand.position.set(START.x, START.y, START.z);
+    wand.rotation.set(START.rx, START.ry, START.rz);
+
+    scene.add(wand);
+    document.getElementById('loading').style.opacity = '0';
+    setTimeout(() => { entryStart = performance.now(); }, 250);
+  },
+  undefined,
+  (err) => console.error('GLB error:', err)
+);
+
+let mouseX = 0, mouseY = 0;
+let parallaxX = 0, parallaxY = 0;
+document.addEventListener('mousemove', e => {
+  mouseX = (e.clientX / window.innerWidth - 0.5) * 2;
+  mouseY = (e.clientY / window.innerHeight - 0.5) * 2;
+});
+
+const clock = new THREE.Clock();
+
+function animate() {
+  requestAnimationFrame(animate);
+  const elapsed = clock.getElapsedTime();
+
+  if (wand && entryStart !== null) {
+    if (!entryDone) {
+      const raw = Math.min((performance.now() - entryStart) / 1000 / ENTRY_DURATION, 1);
+      const tP = easeOutQuint(raw);
+      const tR = easeOutBack(Math.min(raw, 1));
+
+      wand.position.x = lerp(START.x, REST.x, tP);
+      wand.position.y = lerp(START.y, REST.y, tP);
+      wand.position.z = lerp(START.z, REST.z, tP);
+      wand.rotation.x = lerp(START.rx, REST.rx, tR);
+      wand.rotation.y = lerp(START.ry, REST.ry, tR);
+      wand.rotation.z = lerp(START.rz, REST.rz, tR);
+
+      if (raw >= 1) entryDone = true;
+
+    } else {
+      parallaxX += (mouseX * 0.06 - parallaxX) * 0.03;
+      parallaxY += (-mouseY * 0.04 - parallaxY) * 0.03;
+
+      wand.position.x = REST.x + parallaxX * 0.12;
+      wand.position.y = REST.y + parallaxY * 0.10;
+      wand.rotation.x = REST.rx + parallaxY * 0.12;
+      wand.rotation.y = REST.ry + parallaxX * 0.12;
+      wand.rotation.z = REST.rz;
+    }
+
+    sparkle.position.set(
+      wand.position.x - 0.5,
+      wand.position.y + 0.4,
+      wand.position.z + 0.5
+    );
+    sparkle.intensity = 1.6 + Math.sin(elapsed * 4.8) * 0.5 + Math.sin(elapsed * 9.1) * 0.2;
+  }
+
+  renderer.render(scene, camera);
+}
+
+animate();
+
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+</script>
+</body>
+</html>
